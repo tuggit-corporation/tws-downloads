@@ -1,0 +1,43 @@
+name: Publish public tws binaries
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+concurrency:
+  group: public-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release set
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path("downloads")
+          targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
+          expected = set()
+          for target in targets:
+              name = "tws-" + target
+              metadata = json.loads((root / (name + ".json")).read_text())
+              archive = root / (name + ".tar.gz")
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              assert metadata["version"] == os.environ["VERSION"].removeprefix("v")
+              assert metadata["sha256"] == digest
+              assert (root / (name + ".tar.gz.sha256")).read_text().split()[0] == digest
+              expected.update([name + ".json", name + ".tar.gz", name + ".tar.gz.sha256"])
+          assert {p.name for p in root.iterdir()} == expected
+          PY
+      - name: Publish binaries only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" downloads/* --verify-tag \
+            --title "tws $GITHUB_REF_NAME" \
+            --notes "Native tws executables and SHA-256 checksums for macOS and Linux. Source code is maintained separately."
