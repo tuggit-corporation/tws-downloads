@@ -17,8 +17,10 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           python3 - <<'PY'
-          import hashlib, json, os
+          import hashlib, json, os, re
           from pathlib import Path
+          version = os.environ["VERSION"].removeprefix("v")
+          assert re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-frontier\.[1-9]\d*)?", version)
           root = Path("downloads")
           targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]
           expected = set()
@@ -38,6 +40,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" downloads/* --verify-tag \
-            --title "tws $GITHUB_REF_NAME" \
-            --notes "Native tws executables and SHA-256 checksums for macOS and Linux. Source code is maintained separately."
+          if [[ "$GITHUB_REF_NAME" == *-frontier.* ]]; then
+            channel="Frontier 1980's"
+            flags=(--prerelease --latest=false)
+          else
+            channel="Wannabe stable"
+            flags=(--latest)
+          fi
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft "${flags[@]}" \
+              --title "tws $GITHUB_REF_NAME / $channel" \
+              --notes "Native tws executables and SHA-256 checksums for macOS and Linux. Source code is maintained separately."
+          fi
+          gh release upload "$GITHUB_REF_NAME" downloads/* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false "${flags[@]}"
+      - name: Advance Frontier download channel
+        if: contains(github.ref_name, '-frontier.')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git tag -f frontier "$GITHUB_SHA"
+          git push origin refs/tags/frontier --force
+          if ! gh release view frontier >/dev/null 2>&1; then
+            gh release create frontier --verify-tag --draft --prerelease --latest=false \
+              --title "Frontier 1980's" \
+              --notes "Experimental tws builds from main. Select Wannabe stable in Account settings to leave this channel."
+          fi
+          gh release upload frontier downloads/*.tar.gz downloads/*.sha256 --clobber
+          gh release upload frontier downloads/*.json --clobber
+          gh release edit frontier --draft=false --prerelease --latest=false
